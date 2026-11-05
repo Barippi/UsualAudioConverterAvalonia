@@ -1,0 +1,85 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:UsualAudioConverter"
+        x:Class="UsualAudioConverter.MainWindow"
+        Title="Usual Audio Converter"
+        Width="950" Height="680"
+        MinWidth="750" MinHeight="500"
+        WindowStartupLocation="CenterScreen"
+        DragDrop.AllowDrop="True">
+
+    <Grid Margin="12" RowDefinitions="Auto,*,Auto,Auto,Auto">
+
+        <!-- Top Bar: Options & Settings -->
+        <Border Grid.Row="0" Background="#1A888888" CornerRadius="6" Padding="10" Margin="0,0,0,10">
+            <WrapPanel VerticalAlignment="Center">
+                <TextBlock Text="変換フォーマット:" VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="Bold"/>
+                <ComboBox x:Name="ComboProfiles" Width="210" Height="30" Margin="0,0,15,0"
+                          SelectionChanged="ComboProfiles_SelectionChanged"/>
+
+                <TextBlock Text="品質/ビットレート:" VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="Bold"/>
+                <ComboBox x:Name="ComboBitrate" Width="210" Height="30" Margin="0,0,15,0"/>
+
+                <TextBlock Text="並列スレッド数:" VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="Bold"/>
+                <ComboBox x:Name="ComboThreads" Width="70" Height="30" Margin="0,0,15,0"/>
+
+                <Button x:Name="BtnSettings" Content="⚙ 外部ツール設定" Padding="10,4" Height="30"
+                        Click="BtnSettings_Click"/>
+            </WrapPanel>
+        </Border>
+
+        <!-- Main DataGrid (x:DataType added for compiled bindings) -->
+        <DataGrid x:Name="GridItems" Grid.Row="1" AutoGenerateColumns="False"
+                  x:DataType="local:AudioItem"
+                  IsReadOnly="True" CanUserSortColumns="True"
+                  GridLinesVisibility="Horizontal" HeadersVisibility="Column">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="ファイル名" Binding="{Binding FileName}" Width="250"/>
+                <DataGridTextColumn Header="状態" Binding="{Binding Status}" Width="110"/>
+                <DataGridTextColumn Header="進捗/詳細" Binding="{Binding Progress}" Width="150"/>
+                <DataGridTextColumn Header="入力元パス" Binding="{Binding SourcePath}" Width="*"/>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <!-- Destination Folder Settings -->
+        <Border Grid.Row="2" Background="#0D888888" BorderBrush="#33888888" BorderThickness="1"
+                CornerRadius="6" Padding="10" Margin="0,10,0,10">
+            <Grid RowDefinitions="Auto,Auto">
+                <StackPanel Orientation="Horizontal" Grid.Row="0" Margin="0,0,0,6" Spacing="15">
+                    <TextBlock Text="保存先設定:" FontWeight="Bold" VerticalAlignment="Center"/>
+                    <RadioButton x:Name="RadioSameDir" Content="元ファイルと同じフォルダに出力" IsChecked="True"
+                                 GroupName="OutDir" VerticalAlignment="Center"/>
+                    <RadioButton x:Name="RadioCustomDir" Content="指定フォルダに出力"
+                                 GroupName="OutDir" VerticalAlignment="Center"/>
+                    <CheckBox x:Name="ChkKeepStructure" Content="元フォルダの階層構造を維持する"
+                              IsEnabled="{Binding #RadioCustomDir.IsChecked}"
+                              IsChecked="True" VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <Grid Grid.Row="1" ColumnDefinitions="*,Auto" IsEnabled="{Binding #RadioCustomDir.IsChecked}">
+                    <TextBox x:Name="TxtCustomDir" Grid.Column="0" Height="30" VerticalContentAlignment="Center"/>
+                    <Button x:Name="BtnBrowseDir" Grid.Column="1" Content="参照..." Margin="8,0,0,0" Padding="15,4"
+                            Click="BtnBrowseDir_Click"/>
+                </Grid>
+            </Grid>
+        </Border>
+
+        <!-- Progress Bar & Actions -->
+        <Grid Grid.Row="3" ColumnDefinitions="*,Auto,Auto,Auto,Auto" Margin="0,0,0,8">
+            <ProgressBar x:Name="ProgressTotal" Grid.Column="0" Height="28" Margin="0,0,10,0"/>
+
+            <Button x:Name="BtnAddFiles" Grid.Column="1" Content="＋ ファイル追加" Padding="14,4" Margin="0,0,8,0"
+                    Click="BtnAddFiles_Click"/>
+            <Button x:Name="BtnClear" Grid.Column="2" Content="クリア" Padding="14,4" Margin="0,0,8,0"
+                    Click="BtnClear_Click"/>
+            <Button x:Name="BtnCancel" Grid.Column="3" Content="中断" Padding="14,4" Margin="0,0,8,0"
+                    IsEnabled="False" Click="BtnCancel_Click"/>
+            <Button x:Name="BtnStart" Grid.Column="4" Content="▶ 変換開始" Padding="20,4"
+                    FontWeight="Bold" Click="BtnStart_Click"/>
+        </Grid>
+
+        <!-- Status Bar -->
+        <TextBlock x:Name="TxtStatus" Grid.Row="4" Text="準備完了 (ファイルをドラッグ＆ドロップしてください)"
+                   Foreground="#888888" Margin="2,0,0,0"/>
+    </Grid>
+</Window>
