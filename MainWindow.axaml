@@ -3,6 +3,7 @@
         xmlns:local="using:UsualAudioConverter"
         x:Class="UsualAudioConverter.MainWindow"
         Title="Usual Audio Converter"
+        Icon="/app.ico"
         Width="950" Height="680"
         MinWidth="750" MinHeight="500"
         WindowStartupLocation="CenterScreen"
@@ -28,7 +29,7 @@
             </WrapPanel>
         </Border>
 
-        <!-- Main DataGrid (x:DataType added for compiled bindings) -->
+        <!-- Main DataGrid -->
         <DataGrid x:Name="GridItems" Grid.Row="1" AutoGenerateColumns="False"
                   x:DataType="local:AudioItem"
                   IsReadOnly="True" CanUserSortColumns="True"

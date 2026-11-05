@@ -111,7 +111,19 @@ public partial class MainWindow : Window
         var files = e.Data.GetFiles();
         if (files == null) return;
 
-        var paths = files.Select(f => f.Path.LocalPath).ToList();
+        var paths = new List<string>();
+        foreach (var item in files)
+        {
+            // Linux/macOS の URI エンコード (%20 等) を解除し、末尾スラッシュを正規化
+            string localPath = Uri.UnescapeDataString(item.Path.LocalPath);
+            localPath = localPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+            if (!string.IsNullOrEmpty(localPath))
+            {
+                paths.Add(localPath);
+            }
+        }
+
         AddPaths(paths);
     }
 
@@ -133,7 +145,8 @@ public partial class MainWindow : Window
 
         if (files.Count > 0)
         {
-            AddPaths(files.Select(f => f.Path.LocalPath));
+            var paths = files.Select(f => Uri.UnescapeDataString(f.Path.LocalPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            AddPaths(paths);
         }
     }
 
@@ -142,15 +155,34 @@ public partial class MainWindow : Window
         var collected = new List<string>();
         foreach (var path in paths)
         {
-            if (File.Exists(path) && ValidExtensions.Contains(Path.GetExtension(path)))
-                collected.Add(path);
-            else if (Directory.Exists(path))
+            try
             {
-                foreach (var f in Directory.EnumerateFiles(path, "*.*", SearchOption.AllDirectories))
+                if (File.Exists(path) && ValidExtensions.Contains(Path.GetExtension(path)))
                 {
-                    if (ValidExtensions.Contains(Path.GetExtension(f)))
-                        collected.Add(f);
+                    collected.Add(path);
                 }
+                else if (Directory.Exists(path))
+                {
+                    // Linux/macOS の権限エラーやシンボリックリンク循環を回避して安全に再帰探索
+                    var enumOptions = new EnumerationOptions
+                    {
+                        RecurseSubdirectories = true,
+                        IgnoreInaccessible = true,
+                        AttributesToSkip = FileAttributes.ReparsePoint
+                    };
+
+                    foreach (var f in Directory.EnumerateFiles(path, "*.*", enumOptions))
+                    {
+                        if (ValidExtensions.Contains(Path.GetExtension(f)))
+                        {
+                            collected.Add(f);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Path scan error ({path}): {ex.Message}");
             }
         }
 
@@ -186,7 +218,8 @@ public partial class MainWindow : Window
 
         if (folders.Count > 0)
         {
-            TxtCustomDir.Text = folders[0].Path.LocalPath;
+            string folderPath = Uri.UnescapeDataString(folders[0].Path.LocalPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            TxtCustomDir.Text = folderPath;
         }
     }
 
@@ -199,15 +232,15 @@ public partial class MainWindow : Window
         var ff = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions { Title = "ffmpeg を指定", FileTypeFilter = exeFilter });
         if (ff.Count > 0)
         {
-            _ffmpegPath = ff[0].Path.LocalPath;
+            _ffmpegPath = Uri.UnescapeDataString(ff[0].Path.LocalPath);
             EncoderService.ResetFdkCache();
         }
 
         var ex = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions { Title = "exhale を指定", FileTypeFilter = exeFilter });
-        if (ex.Count > 0) _exhalePath = ex[0].Path.LocalPath;
+        if (ex.Count > 0) _exhalePath = Uri.UnescapeDataString(ex[0].Path.LocalPath);
 
         var fdk = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions { Title = "fdkaac を指定 (任意)", FileTypeFilter = exeFilter });
-        if (fdk.Count > 0) _fdkaacPath = fdk[0].Path.LocalPath;
+        if (fdk.Count > 0) _fdkaacPath = Uri.UnescapeDataString(fdk[0].Path.LocalPath);
 
         await RefreshProfilesAsync();
     }
