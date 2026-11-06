@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Controls;
@@ -102,12 +104,8 @@ public partial class MainWindow : Window
 
     private void OnDragOver(object? sender, DragEventArgs e)
     {
-        // Files 形式または text/uri-list / テキスト形式があればドロップを許可
-        bool canDrop = e.Data.Contains(DataFormats.Files) ||
-                       e.Data.Contains(DataFormats.Text) ||
-                       e.Data.Contains("text/uri-list");
-
-        e.DragEffects = canDrop ? DragDropEffects.Copy : DragDropEffects.None;
+        // Xfce4/Thunar や X11 からのドラッグ時に事前フィルタで弾かれないよう無条件で許可
+        e.DragEffects = DragDropEffects.Copy;
         e.Handled = true;
     }
 
@@ -115,63 +113,89 @@ public partial class MainWindow : Window
     {
         var paths = new List<string>();
 
-        // 1. 標準の GetFiles() からの取得
+        // 1. Avalonia 標準の GetFiles() 取得
         try
         {
             var files = e.Data.GetFiles();
             if (files != null)
             {
-                foreach (var item in files)
+                foreach (var f in files)
                 {
-                    try
-                    {
-                        string p = item.Path.IsAbsoluteUri ? item.Path.LocalPath : item.Path.ToString();
-                        p = Uri.UnescapeDataString(p).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-                        if (!string.IsNullOrEmpty(p)) paths.Add(p);
-                    }
-                    catch { }
+                    string p = f.Path.IsAbsoluteUri ? f.Path.LocalPath : f.Path.ToString();
+                    p = Uri.UnescapeDataString(p).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    if (!string.IsNullOrEmpty(p)) paths.Add(p);
                 }
             }
         }
         catch { }
 
-        // 2. Linux (X11/Wayland/MIME) フォールバック: text/uri-list や GetText() から取得
+        // 2. Thunar / XDND 固有のフォーマット総当たり走査 (byte[] / string / text/uri-list)
         if (paths.Count == 0)
         {
-            string? rawUriText = null;
-            if (e.Data.Contains(DataFormats.Text))
+            var formats = e.Data.GetDataFormats().ToList();
+            foreach (var format in formats)
             {
-                rawUriText = e.Data.GetText();
-            }
-            else if (e.Data.Contains("text/uri-list"))
-            {
-                rawUriText = e.Data.Get("text/uri-list") as string;
-            }
-
-            if (!string.IsNullOrEmpty(rawUriText))
-            {
-                var lines = rawUriText.Split(new[] { "\r\n", "\n", "\r" }, StringSplitOptions.RemoveEmptyEntries);
-                foreach (var line in lines)
+                try
                 {
-                    string trimmed = line.Trim();
-                    if (trimmed.StartsWith("#") || string.IsNullOrEmpty(trimmed)) continue;
-
-                    if (Uri.TryCreate(trimmed, UriKind.Absolute, out var uri) && uri.IsFile)
+                    var data = e.Data.Get(format);
+                    if (data is string textData)
                     {
-                        string p = Uri.UnescapeDataString(uri.LocalPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-                        if (!string.IsNullOrEmpty(p)) paths.Add(p);
+                        ExtractPathsFromText(textData, paths);
                     }
-                    else if (File.Exists(trimmed) || Directory.Exists(trimmed))
+                    else if (data is byte[] bytes)
                     {
-                        paths.Add(trimmed);
+                        // X11 の生の Atom バイト配列から UTF-8 文字列として復元
+                        string decoded = Encoding.UTF8.GetString(bytes);
+                        ExtractPathsFromText(decoded, paths);
+                    }
+                    else if (data is IEnumerable<string> stringEnum)
+                    {
+                        foreach (var s in stringEnum)
+                        {
+                            ExtractPathsFromText(s, paths);
+                        }
                     }
                 }
+                catch { }
+
+                if (paths.Count > 0) break;
             }
         }
 
+        // 3. 取得したパスを展開して登録
         if (paths.Count > 0)
         {
-            AddPaths(paths);
+            AddPaths(paths.Distinct(StringComparer.OrdinalIgnoreCase));
+        }
+    }
+
+    private static void ExtractPathsFromText(string rawText, List<string> destination)
+    {
+        if (string.IsNullOrWhiteSpace(rawText)) return;
+
+        // 改行コードおよび Null 文字区切りに対応
+        var lines = rawText.Split(new[] { "\r\n", "\n", "\r", "\0" }, StringSplitOptions.RemoveEmptyEntries);
+        foreach (var line in lines)
+        {
+            string trimmed = line.Trim();
+
+            // Thunar/Nautilus の特殊プレフィックス (copy/cut コマンドヘッダー等) をスキップ
+            if (trimmed.StartsWith("copy", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.StartsWith("cut", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.StartsWith("#"))
+            {
+                continue;
+            }
+
+            if (Uri.TryCreate(trimmed, UriKind.Absolute, out var uri) && uri.IsFile)
+            {
+                string p = Uri.UnescapeDataString(uri.LocalPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                if (!string.IsNullOrEmpty(p)) destination.Add(p);
+            }
+            else if (trimmed.StartsWith("/") && (File.Exists(trimmed) || Directory.Exists(trimmed)))
+            {
+                destination.Add(trimmed.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            }
         }
     }
 
@@ -212,13 +236,13 @@ public partial class MainWindow : Window
                 }
                 else if (Directory.Exists(path))
                 {
-                    // CIFS/SMBマウントやLinuxのACL環境でも安全に全走査できるスタック型ディレクトリ探索
+                    // CIFS/マウントポイント/ACLに耐性のあるスタック走査
                     TraverseDirectorySafe(path, collected);
                 }
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Path scan error ({path}): {ex.Message}");
+                Debug.WriteLine($"Path scan error ({path}): {ex.Message}");
             }
         }
 
@@ -236,7 +260,7 @@ public partial class MainWindow : Window
             }
         }
 
-        TxtStatus.Text = $"{Items.Count} 件のファイルが登録されています (今回追加: {addedCount}件)";
+        TxtStatus.Text = $"{Items.Count} 件のファイルが登録されています (追加: {addedCount}件)";
     }
 
     private static void TraverseDirectorySafe(string rootDir, List<string> collected)
@@ -248,7 +272,6 @@ public partial class MainWindow : Window
         {
             string currentDir = dirsToVisit.Pop();
 
-            // 1. カレントディレクトリのファイル走査
             try
             {
                 foreach (var file in Directory.EnumerateFiles(currentDir))
@@ -259,9 +282,8 @@ public partial class MainWindow : Window
                     }
                 }
             }
-            catch { /* 読み取り不可のファイル・フォルダは個別スキップ */ }
+            catch { }
 
-            // 2. サブディレクトリの探索（CIFSマウントポイントやシンボリックリンク属性の誤認を防ぐ）
             try
             {
                 foreach (var subDir in Directory.EnumerateDirectories(currentDir))
@@ -269,7 +291,6 @@ public partial class MainWindow : Window
                     try
                     {
                         var di = new DirectoryInfo(subDir);
-                        // ReparsePoint（リンク）のうち、再帰ループの原因になり得る場合を除外
                         if ((di.Attributes & FileAttributes.ReparsePoint) != 0)
                             continue;
 
