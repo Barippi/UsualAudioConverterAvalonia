@@ -104,7 +104,6 @@ public partial class MainWindow : Window
 
     private void OnDragOver(object? sender, DragEventArgs e)
     {
-        // Xfce4/Thunar や X11 からのドラッグ時に事前フィルタで弾かれないよう無条件で許可
         e.DragEffects = DragDropEffects.Copy;
         e.Handled = true;
     }
@@ -144,7 +143,6 @@ public partial class MainWindow : Window
                     }
                     else if (data is byte[] bytes)
                     {
-                        // X11 の生の Atom バイト配列から UTF-8 文字列として復元
                         string decoded = Encoding.UTF8.GetString(bytes);
                         ExtractPathsFromText(decoded, paths);
                     }
@@ -162,7 +160,6 @@ public partial class MainWindow : Window
             }
         }
 
-        // 3. 取得したパスを展開して登録
         if (paths.Count > 0)
         {
             AddPaths(paths.Distinct(StringComparer.OrdinalIgnoreCase));
@@ -173,13 +170,10 @@ public partial class MainWindow : Window
     {
         if (string.IsNullOrWhiteSpace(rawText)) return;
 
-        // 改行コードおよび Null 文字区切りに対応
         var lines = rawText.Split(new[] { "\r\n", "\n", "\r", "\0" }, StringSplitOptions.RemoveEmptyEntries);
         foreach (var line in lines)
         {
             string trimmed = line.Trim();
-
-            // Thunar/Nautilus の特殊プレフィックス (copy/cut コマンドヘッダー等) をスキップ
             if (trimmed.StartsWith("copy", StringComparison.OrdinalIgnoreCase) ||
                 trimmed.StartsWith("cut", StringComparison.OrdinalIgnoreCase) ||
                 trimmed.StartsWith("#"))
@@ -203,7 +197,7 @@ public partial class MainWindow : Window
     {
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
-            Title = "音声ファイルを選択",
+            Title = "音声ファイルを選択 (複数選択可)",
             AllowMultiple = true,
             FileTypeFilter = new[]
             {
@@ -217,7 +211,25 @@ public partial class MainWindow : Window
 
         if (files.Count > 0)
         {
-            var paths = files.Select(f => Uri.UnescapeDataString(f.Path.LocalPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            var paths = files.Select(f => Uri.UnescapeDataString(f.Path.IsAbsoluteUri ? f.Path.LocalPath : f.Path.ToString())
+                                            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            AddPaths(paths);
+        }
+    }
+
+    private async void BtnAddFolder_Click(object? sender, RoutedEventArgs e)
+    {
+        // 複数フォルダの一括選択を明示的に有効化
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "追加する音源フォルダを選択 (Ctrl/Shiftで複数選択可)",
+            AllowMultiple = true
+        });
+
+        if (folders.Count > 0)
+        {
+            var paths = folders.Select(f => Uri.UnescapeDataString(f.Path.IsAbsoluteUri ? f.Path.LocalPath : f.Path.ToString())
+                                              .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
             AddPaths(paths);
         }
     }
@@ -316,12 +328,14 @@ public partial class MainWindow : Window
     {
         var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
         {
-            Title = "保存先フォルダを選択"
+            Title = "保存先フォルダを選択",
+            AllowMultiple = false
         });
 
         if (folders.Count > 0)
         {
-            string folderPath = Uri.UnescapeDataString(folders[0].Path.LocalPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string folderPath = Uri.UnescapeDataString(folders[0].Path.IsAbsoluteUri ? folders[0].Path.LocalPath : folders[0].Path.ToString())
+                                   .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             TxtCustomDir.Text = folderPath;
         }
     }
@@ -332,17 +346,17 @@ public partial class MainWindow : Window
             ? new[] { new FilePickerFileType("Executable") { Patterns = new[] { "*.exe" } }, FilePickerFileTypes.All }
             : new[] { FilePickerFileTypes.All };
 
-        var ff = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions { Title = "ffmpeg を指定", FileTypeFilter = exeFilter });
+        var ff = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions { Title = "ffmpeg を指定", FileTypeFilter = exeFilter, AllowMultiple = false });
         if (ff.Count > 0)
         {
             _ffmpegPath = Uri.UnescapeDataString(ff[0].Path.LocalPath);
             EncoderService.ResetFdkCache();
         }
 
-        var ex = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions { Title = "exhale を指定", FileTypeFilter = exeFilter });
+        var ex = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions { Title = "exhale を指定", FileTypeFilter = exeFilter, AllowMultiple = false });
         if (ex.Count > 0) _exhalePath = Uri.UnescapeDataString(ex[0].Path.LocalPath);
 
-        var fdk = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions { Title = "fdkaac を指定 (任意)", FileTypeFilter = exeFilter });
+        var fdk = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions { Title = "fdkaac を指定 (任意)", FileTypeFilter = exeFilter, AllowMultiple = false });
         if (fdk.Count > 0) _fdkaacPath = Uri.UnescapeDataString(fdk[0].Path.LocalPath);
 
         await RefreshProfilesAsync();
@@ -528,6 +542,7 @@ public partial class MainWindow : Window
         BtnStart.IsEnabled = !isEncoding;
         BtnClear.IsEnabled = !isEncoding;
         BtnAddFiles.IsEnabled = !isEncoding;
+        BtnAddFolder.IsEnabled = !isEncoding;
         BtnSettings.IsEnabled = !isEncoding;
         ComboProfiles.IsEnabled = !isEncoding;
         ComboBitrate.IsEnabled = !isEncoding;
