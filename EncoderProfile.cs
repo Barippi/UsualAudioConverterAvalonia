@@ -14,7 +14,6 @@ public class EncoderProfile
     public object[] QualityOptions { get; set; } = Array.Empty<object>();
     public object DefaultQuality { get; set; } = 0;
 
-    // HE-AAC v1 / v2 など、FDK (libfdk_aac または fdkaac) が必須のプロファイルか判定
     public bool RequiresFdk => Profile is "aac_he" or "aac_he_v2";
 
     public static List<EncoderProfile> GetProfiles() => new()

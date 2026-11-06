@@ -102,29 +102,77 @@ public partial class MainWindow : Window
 
     private void OnDragOver(object? sender, DragEventArgs e)
     {
-        e.DragEffects = e.Data.Contains(DataFormats.Files) ? DragDropEffects.Copy : DragDropEffects.None;
+        // Files 形式または text/uri-list / テキスト形式があればドロップを許可
+        bool canDrop = e.Data.Contains(DataFormats.Files) ||
+                       e.Data.Contains(DataFormats.Text) ||
+                       e.Data.Contains("text/uri-list");
+
+        e.DragEffects = canDrop ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
     }
 
     private void OnDrop(object? sender, DragEventArgs e)
     {
-        var files = e.Data.GetFiles();
-        if (files == null) return;
-
         var paths = new List<string>();
-        foreach (var item in files)
-        {
-            // Linux/macOS の URI エンコード (%20 等) を解除し、末尾スラッシュを正規化
-            string localPath = Uri.UnescapeDataString(item.Path.LocalPath);
-            localPath = localPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
-            if (!string.IsNullOrEmpty(localPath))
+        // 1. 標準の GetFiles() からの取得
+        try
+        {
+            var files = e.Data.GetFiles();
+            if (files != null)
             {
-                paths.Add(localPath);
+                foreach (var item in files)
+                {
+                    try
+                    {
+                        string p = item.Path.IsAbsoluteUri ? item.Path.LocalPath : item.Path.ToString();
+                        p = Uri.UnescapeDataString(p).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                        if (!string.IsNullOrEmpty(p)) paths.Add(p);
+                    }
+                    catch { }
+                }
+            }
+        }
+        catch { }
+
+        // 2. Linux (X11/Wayland/MIME) フォールバック: text/uri-list や GetText() から取得
+        if (paths.Count == 0)
+        {
+            string? rawUriText = null;
+            if (e.Data.Contains(DataFormats.Text))
+            {
+                rawUriText = e.Data.GetText();
+            }
+            else if (e.Data.Contains("text/uri-list"))
+            {
+                rawUriText = e.Data.Get("text/uri-list") as string;
+            }
+
+            if (!string.IsNullOrEmpty(rawUriText))
+            {
+                var lines = rawUriText.Split(new[] { "\r\n", "\n", "\r" }, StringSplitOptions.RemoveEmptyEntries);
+                foreach (var line in lines)
+                {
+                    string trimmed = line.Trim();
+                    if (trimmed.StartsWith("#") || string.IsNullOrEmpty(trimmed)) continue;
+
+                    if (Uri.TryCreate(trimmed, UriKind.Absolute, out var uri) && uri.IsFile)
+                    {
+                        string p = Uri.UnescapeDataString(uri.LocalPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                        if (!string.IsNullOrEmpty(p)) paths.Add(p);
+                    }
+                    else if (File.Exists(trimmed) || Directory.Exists(trimmed))
+                    {
+                        paths.Add(trimmed);
+                    }
+                }
             }
         }
 
-        AddPaths(paths);
+        if (paths.Count > 0)
+        {
+            AddPaths(paths);
+        }
     }
 
     private async void BtnAddFiles_Click(object? sender, RoutedEventArgs e)
@@ -157,27 +205,15 @@ public partial class MainWindow : Window
         {
             try
             {
-                if (File.Exists(path) && ValidExtensions.Contains(Path.GetExtension(path)))
+                if (File.Exists(path))
                 {
-                    collected.Add(path);
+                    if (ValidExtensions.Contains(Path.GetExtension(path)))
+                        collected.Add(path);
                 }
                 else if (Directory.Exists(path))
                 {
-                    // Linux/macOS の権限エラーやシンボリックリンク循環を回避して安全に再帰探索
-                    var enumOptions = new EnumerationOptions
-                    {
-                        RecurseSubdirectories = true,
-                        IgnoreInaccessible = true,
-                        AttributesToSkip = FileAttributes.ReparsePoint
-                    };
-
-                    foreach (var f in Directory.EnumerateFiles(path, "*.*", enumOptions))
-                    {
-                        if (ValidExtensions.Contains(Path.GetExtension(f)))
-                        {
-                            collected.Add(f);
-                        }
-                    }
+                    // CIFS/SMBマウントやLinuxのACL環境でも安全に全走査できるスタック型ディレクトリ探索
+                    TraverseDirectorySafe(path, collected);
                 }
             }
             catch (Exception ex)
@@ -186,6 +222,7 @@ public partial class MainWindow : Window
             }
         }
 
+        int addedCount = 0;
         foreach (var file in collected)
         {
             if (_queuedPaths.Add(file))
@@ -195,9 +232,54 @@ public partial class MainWindow : Window
                     FileName = Path.GetFileName(file),
                     SourcePath = file
                 });
+                addedCount++;
             }
         }
-        TxtStatus.Text = $"{Items.Count} 件のファイルが登録されています";
+
+        TxtStatus.Text = $"{Items.Count} 件のファイルが登録されています (今回追加: {addedCount}件)";
+    }
+
+    private static void TraverseDirectorySafe(string rootDir, List<string> collected)
+    {
+        var dirsToVisit = new Stack<string>();
+        dirsToVisit.Push(rootDir);
+
+        while (dirsToVisit.Count > 0)
+        {
+            string currentDir = dirsToVisit.Pop();
+
+            // 1. カレントディレクトリのファイル走査
+            try
+            {
+                foreach (var file in Directory.EnumerateFiles(currentDir))
+                {
+                    if (ValidExtensions.Contains(Path.GetExtension(file)))
+                    {
+                        collected.Add(file);
+                    }
+                }
+            }
+            catch { /* 読み取り不可のファイル・フォルダは個別スキップ */ }
+
+            // 2. サブディレクトリの探索（CIFSマウントポイントやシンボリックリンク属性の誤認を防ぐ）
+            try
+            {
+                foreach (var subDir in Directory.EnumerateDirectories(currentDir))
+                {
+                    try
+                    {
+                        var di = new DirectoryInfo(subDir);
+                        // ReparsePoint（リンク）のうち、再帰ループの原因になり得る場合を除外
+                        if ((di.Attributes & FileAttributes.ReparsePoint) != 0)
+                            continue;
+
+                        dirsToVisit.Push(subDir);
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+        }
     }
 
     private void BtnClear_Click(object? sender, RoutedEventArgs e)

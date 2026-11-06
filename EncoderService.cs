@@ -75,7 +75,6 @@ public static class EncoderService
 
         try
         {
-            // --- AAC-LC / HE-AAC の自動フォールバック判定 ---
             if (profile.Mode == "fdk_vbr" || (profile.Codec == "libfdk_aac" && profile.Mode == "bitrate"))
             {
                 bool hasLibFdk = await CheckLibFdkSupportAsync(ffmpegPath, ct);
@@ -83,22 +82,18 @@ public static class EncoderService
 
                 if (!hasLibFdk && hasFdkaacCli)
                 {
-                    // 分岐2: FFmpegにlibfdk_aacがないが、fdkaacがある -> パイプ処理
                     await EncodeWithFdkaacCliAsync(item, ffmpegPath, fdkaacPath, profile, qualityValue, tempOut, progress, ct);
                     FinalizeOutputFile(item, tempOut, progress);
                     return;
                 }
                 else if (!hasLibFdk && !hasFdkaacCli)
                 {
-                    // 分岐3: どちらもない -> FFmpeg 内蔵 aac にフォールバック
                     await EncodeWithNativeAacAsync(item, ffmpegPath, profile, qualityValue, tempOut, progress, ct);
                     FinalizeOutputFile(item, tempOut, progress);
                     return;
                 }
-                // 分岐1: libfdk_aac がある場合はそのまま下の通常の FFmpeg 単体処理へ進む
             }
 
-            // --- 通常の FFmpeg / exhale 処理 ---
             if (profile.Engine == "ffmpeg")
             {
                 var args = new List<string> { "-y", "-nostdin", "-i", item.SourcePath, "-map", "0:a:0", "-c:a", profile.Codec ?? "copy" };
