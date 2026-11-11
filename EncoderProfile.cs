@@ -18,7 +18,6 @@ public class EncoderProfile
 
     public static List<EncoderProfile> GetProfiles() => new()
     {
-        // --- ロッシー（VBR / ABR） ---
         new EncoderProfile
         {
             Name = "MP3 (LAME VBR)",
@@ -91,8 +90,6 @@ public class EncoderProfile
             QualityOptions = new object[] { 24, 32, 40, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 256 },
             DefaultQuality = 64
         },
-
-        // --- ロスレス ---
         new EncoderProfile
         {
             Name = "FLAC (可逆圧縮)",

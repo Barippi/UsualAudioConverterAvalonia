@@ -30,14 +30,19 @@ public partial class MainWindow : Window
     public ObservableCollection<AudioItem> Items { get; } = new();
     private readonly HashSet<string> _queuedPaths = new(StringComparer.OrdinalIgnoreCase);
 
-    private string _ffmpegPath = OperatingSystem.IsWindows() ? "ffmpeg.exe" : "ffmpeg";
-    private string _exhalePath = OperatingSystem.IsWindows() ? "exhale.exe" : "exhale";
-    private string _fdkaacPath = OperatingSystem.IsWindows() ? "fdkaac.exe" : "fdkaac";
+    private readonly AppConfig _config = AppConfig.Load();
+    private string _ffmpegPath = string.Empty;
+    private string _exhalePath = string.Empty;
+    private string _fdkaacPath = string.Empty;
     private CancellationTokenSource? _cts;
 
     public MainWindow()
     {
         InitializeComponent();
+
+        _ffmpegPath = _config.FfmpegPath;
+        _exhalePath = _config.ExhalePath;
+        _fdkaacPath = _config.FdkaacPath;
 
         GridItems.ItemsSource = Items;
         InitializeControls();
@@ -112,7 +117,6 @@ public partial class MainWindow : Window
     {
         var paths = new List<string>();
 
-        // 1. Avalonia 標準の GetFiles() 取得
         try
         {
             var files = e.Data.GetFiles();
@@ -128,7 +132,6 @@ public partial class MainWindow : Window
         }
         catch { }
 
-        // 2. Thunar / XDND 固有のフォーマット総当たり走査 (byte[] / string / text/uri-list)
         if (paths.Count == 0)
         {
             var formats = e.Data.GetDataFormats().ToList();
@@ -219,7 +222,6 @@ public partial class MainWindow : Window
 
     private async void BtnAddFolder_Click(object? sender, RoutedEventArgs e)
     {
-        // 複数フォルダの一括選択を明示的に有効化
         var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
         {
             Title = "追加する音源フォルダを選択 (Ctrl/Shiftで複数選択可)",
@@ -248,7 +250,6 @@ public partial class MainWindow : Window
                 }
                 else if (Directory.Exists(path))
                 {
-                    // CIFS/マウントポイント/ACLに耐性のあるスタック走査
                     TraverseDirectorySafe(path, collected);
                 }
             }
@@ -358,6 +359,11 @@ public partial class MainWindow : Window
 
         var fdk = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions { Title = "fdkaac を指定 (任意)", FileTypeFilter = exeFilter, AllowMultiple = false });
         if (fdk.Count > 0) _fdkaacPath = Uri.UnescapeDataString(fdk[0].Path.LocalPath);
+
+        _config.FfmpegPath = _ffmpegPath;
+        _config.ExhalePath = _exhalePath;
+        _config.FdkaacPath = _fdkaacPath;
+        _config.Save();
 
         await RefreshProfilesAsync();
     }
